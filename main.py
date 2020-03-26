@@ -1,6 +1,7 @@
 import select
 import socket
 import sys
+import threading
 
 from loguru import logger
 from paramiko import AutoAddPolicy, Channel, ChannelFile, SSHClient, Transport
@@ -53,7 +54,9 @@ class RemoteClient:
         self.disconnect()
 
 
-def handler(channel: Channel, local_port: int):
+def forwarder(channel: Channel, local_port: int):
+
+    # connect to localhost via sockets
     sock = socket.socket()
     try:
         sock.connect((LOCALHOST, local_port))
@@ -61,8 +64,9 @@ def handler(channel: Channel, local_port: int):
         logger.error(f'Forwarding request to {local_port} failed: e')
         return
 
+    # read data from channel or socket and send to opposite site
     while True:
-        r, w, x = select.select([sock, channel], [], [])
+        r, _, _ = select.select([sock, channel], [], [])
         if sock in r:
             data = sock.recv(1024)
             if len(data) == 0:
@@ -95,20 +99,20 @@ class Connection:
         for line in stderr:
             logger.info(f"STDIN: {cmd} | STDERR: {line}")
 
-    def r_forward(self):
+    def right_forwarding(self):
         transport: Transport = self.client.get_transport()
         transport.request_port_forward('127.0.0.1', port=10001)
 
         while True:
 
             # wait 2 seconds for new channel
-            channel: Channel = transport.accept(timeout=2)
+            channel: Channel = transport.accept(timeout=10)
             if channel is None:
                 continue
 
             # Handle new channel and forward traffic to local port
             # TODO: create new tread for handling channel connection
-            handler(channel, local_port=8000)
+            forwarder(channel, local_port=8000)
 
 
 def main():
@@ -120,9 +124,13 @@ def main():
 
     with client as conn:
         conn.execute_commands('pwd')
-        conn.r_forward()
+
+        # Run right forwarding in background
+        r_forward_thread = threading.Thread(target=conn.right_forwarding)
+        r_forward_thread.run()
+
         # conn.execute_commands('lsof -i -P -n')
-        # conn.execute_commands('curl 127.0.0.1:10000')
+        conn.execute_commands('curl 127.0.0.1:10000')
         # conn.execute_commands(
         #     'sshfs '
         #     '-p 10000 '
