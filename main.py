@@ -2,6 +2,7 @@ import select
 import socket
 import sys
 import threading
+import selectors
 
 from loguru import logger
 from paramiko import AutoAddPolicy, Channel, ChannelFile, SSHClient, Transport
@@ -54,7 +55,26 @@ class RemoteClient:
         self.disconnect()
 
 
-def forwarder(channel: Channel, local_port: int):
+def right_forwarder(channel: Channel, local_port: int):
+    selector = selectors.DefaultSelector()
+
+    def from_localhost():
+        data = sock.recv(1024)
+        if len(data) == 0:
+            return data
+        channel.send(data)
+        return data
+
+    def to_localhost():
+        data = sock.recv(1024)
+        if len(data) == 0:
+            return data
+        channel.send(data)
+        return data
+
+
+    selector.register(socket, selectors.EVENT_READ, from_localhost)
+    selector.register(channel, selectors.EVENT_READ, to_localhost)
 
     # connect to localhost via sockets
     sock = socket.socket()
@@ -112,7 +132,7 @@ class Connection:
 
             # Handle new channel and forward traffic to local port
             # TODO: create new tread for handling channel connection
-            forwarder(channel, local_port=8000)
+            right_forwarder(channel, local_port=8000)
 
 
 def main():
